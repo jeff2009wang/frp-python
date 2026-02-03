@@ -53,8 +53,25 @@ if [ "$PROTOCOL" = "hysteria2" ]; then
             ;;
     esac
     
-    curl -L -o /usr/local/bin/hysteria2 https://github.com/apernet/hysteria2/releases/latest/download/$BINARY
+    log_info "正在下载 Hysteria2 for $ARCH..."
+    
+    if ! curl -L -o /usr/local/bin/hysteria2 "https://github.com/apernet/hysteria2/releases/latest/download/$BINARY"; then
+        log_error "Hysteria2 下载失败，尝试使用备用下载地址..."
+        # 备用下载地址：指定版本
+        curl -L -o /usr/local/bin/hysteria2 "https://github.com/apernet/hysteria2/releases/download/v2.4.4/$BINARY" || {
+            log_error "Hysteria2 下载失败，请检查网络连接"
+            exit 1
+        }
+    fi
+    
     chmod +x /usr/local/bin/hysteria2
+    
+    # 验证文件是否下载成功
+    if [ ! -s /usr/local/bin/hysteria2 ]; then
+        log_error "Hysteria2 文件下载失败或为空"
+        exit 1
+    fi
+    
     log_info "Hysteria2下载完成"
     
     # 生成证书和配置
@@ -147,6 +164,10 @@ EOF
         exit 1
     fi
     
+    # 保存密码到文件（方便客户端获取）
+    echo "${PASSWORD}" > /tmp/hysteria2_password.txt
+    chmod 600 /tmp/hysteria2_password.txt
+    
     # 显示重要信息
     echo ""
     echo "========================================"
@@ -156,12 +177,17 @@ EOF
     echo "服务端端口: ${SERVER_PORT}"
     echo "认证密码: ${PASSWORD}"
     echo ""
+    echo "⚠️  请务必保存此密码，客户端连接时需要使用！"
+    echo ""
+    echo "密码已保存到: /tmp/hysteria2_password.txt"
+    echo ""
     echo "管理命令:"
     echo "  启动: systemctl start hysteria2-server"
     echo "  停止: systemctl stop hysteria2-server"
     echo "  重启: systemctl restart hysteria2-server"
     echo "  状态: systemctl status hysteria2-server"
     echo "  日志: journalctl -u hysteria2-server -f"
+    echo "  查看密码: cat /tmp/hysteria2_password.txt"
     echo ""
     echo "========================================"
     echo ""

@@ -30,16 +30,6 @@ sudo yum install -y sshpass curl wget python3 python3-pip
 brew install sshpass
 ```
 
-### 2. 测试服务器连接
-
-```bash
-# 测试客户端服务器
-sshpass -p "uUyb-ARfcT=D2mMpBn(L)" ssh -o StrictHostKeyChecking=no -p 9321 root@47.117.159.145 "echo '连接成功'"
-
-# 测试服务端服务器
-sshpass -p "JeiFing1234@" ssh -o StrictHostKeyChecking=no -p 22 root@8.162.10.216 "echo '连接成功'"
-```
-
 ### 3. 准备服务器环境
 
 ```bash
