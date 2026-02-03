@@ -37,7 +37,7 @@ yum install -y -q curl wget python3 python3-pip git systemd
 
 # 安装Python依赖
 log_step "安装Python依赖..."
-pip3 install aioquic pyOpenSSL certifi --upgrade
+pip3 install aioquic pyOpenSSL certifi --break-system-packages --upgrade
 
 # 下载代码
 log_step "下载FRP代码..."
