@@ -45,9 +45,12 @@ apt-get update -qq || yum update -y -q
 apt-get install -y -qq curl wget python3 python3-pip git systemd || \
 yum install -y -q curl wget python3 python3-pip git systemd
 
-# 安装Python依赖
-log_step "安装Python依赖..."
-pip3 install aioquic pyOpenSSL certifi --break-system-packages --upgrade
+# 检测是否在虚拟环境中
+if [ -n "$VIRTUAL_ENV" ]; then
+    log_error "请先退出虚拟环境！"
+    log_info "运行: deactivate"
+    exit 1
+fi
 
 # 下载代码
 log_step "下载FRP代码..."
@@ -62,6 +65,19 @@ else
     cd frp-python
 fi
 
+# 创建虚拟环境
+log_step "创建Python虚拟环境..."
+if [ ! -d "venv" ]; then
+    python3 -m venv venv
+    log_info "虚拟环境创建完成"
+else
+    log_info "虚拟环境已存在"
+fi
+
+# 安装Python依赖
+log_step "安装Python依赖..."
+./venv/bin/pip install aioquic pyOpenSSL certifi --upgrade
+
 # 创建systemd服务
 log_step "创建systemd服务..."
 cat > /etc/systemd/system/frp-quic-client.service << EOF
@@ -72,7 +88,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/frp-python/frp-python
-ExecStart=/usr/bin/python3 version_quic_pure_python/frpc_quic.py ${SERVER_HOST} ${SERVER_PORT}
+ExecStart=/opt/frp-python/frp-python/venv/bin/python version_quic_pure_python/frpc_quic.py ${SERVER_HOST} ${SERVER_PORT}
 Restart=on-failure
 RestartSec=5s
 
