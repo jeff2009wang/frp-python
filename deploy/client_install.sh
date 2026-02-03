@@ -76,7 +76,7 @@ fi
 
 # 安装Python依赖
 log_step "安装Python依赖..."
-./venv/bin/pip install aioquic pyOpenSSL certifi --upgrade
+./venv/bin/pip install aioquic pyOpenSSL certifi --upgrade --ignore-installed
 
 # 创建systemd服务
 log_step "创建systemd服务..."

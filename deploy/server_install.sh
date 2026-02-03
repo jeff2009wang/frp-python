@@ -66,7 +66,7 @@ fi
 
 # 安装Python依赖
 log_step "安装Python依赖..."
-./venv/bin/pip install aioquic pyOpenSSL certifi --upgrade
+./venv/bin/pip install aioquic pyOpenSSL certifi --upgrade --ignore-installed
 
 # 创建证书
 log_step "生成SSL证书..."
