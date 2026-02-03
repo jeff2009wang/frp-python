@@ -510,9 +510,6 @@ class FrpcQuicClient:
             alpn_protocols=['frp-quic'],
             verify_mode=False,
             idle_timeout=300.0,
-            max_stream_data_bidi_local=256 * 1024 * 1024,
-            max_stream_data_bidi_remote=256 * 1024 * 1024,
-            max_data=1024 * 1024 * 1024,
         )
         
         logger.info(f'Connecting to {self.server_host}:{self.server_port} using QUIC')

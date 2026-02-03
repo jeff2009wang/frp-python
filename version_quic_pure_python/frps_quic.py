@@ -412,8 +412,6 @@ class FrpsQuicServer:
         configuration = QuicConfiguration(
             is_client=False,
             alpn_protocols=['frp-quic'],
-            max_stream_data=256 * 1024 * 1024,
-            max_data=1024 * 1024 * 1024,
             idle_timeout=300.0,
         )
         
