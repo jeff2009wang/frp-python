@@ -41,9 +41,13 @@ echo ""
 
 # 更新系统并安装依赖
 log_step "更新系统并安装依赖..."
-apt-get update -qq || yum update -y -q
-apt-get install -y -qq curl wget python3 python3-pip git systemd || \
-yum install -y -q curl wget python3 python3-pip git systemd
+if command -v apt-get &> /dev/null; then
+    apt-get update -qq
+    apt-get install -y -qq curl wget python3 python3-pip python3-venv git systemd
+elif command -v yum &> /dev/null; then
+    yum update -y -q
+    yum install -y -q curl wget python3 python3-pip git systemd
+fi
 
 # 检测是否在虚拟环境中
 if [ -n "$VIRTUAL_ENV" ]; then
@@ -74,9 +78,26 @@ else
     log_info "虚拟环境已存在"
 fi
 
+# 升级pip
+log_step "升级pip..."
+./venv/bin/pip install --upgrade pip setuptools wheel
+
+# 安装编译依赖（CentOS/RHEL）
+if command -v yum &> /dev/null; then
+    log_step "安装编译依赖..."
+    yum install -y gcc python3-devel rust cargo 2>/dev/null || true
+fi
+
 # 安装Python依赖
 log_step "安装Python依赖..."
-./venv/bin/pip install aioquic pyOpenSSL certifi --upgrade --ignore-installed
+if command -v yum &> /dev/null; then
+    # CentOS/RHEL 使用预编译包
+    ./venv/bin/pip install --only-binary :all: aioquic pyOpenSSL certifi --upgrade --ignore-installed || \
+    ./venv/bin/pip install aioquic pyOpenSSL certifi --upgrade --ignore-installed
+else
+    # Debian/Ubuntu 可以从源码编译
+    ./venv/bin/pip install aioquic pyOpenSSL certifi --upgrade --ignore-installed
+fi
 
 # 创建systemd服务
 log_step "创建systemd服务..."
