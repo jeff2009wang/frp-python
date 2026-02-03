@@ -13,19 +13,6 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# 配置变量
-CLIENT_HOST="47.117.159.145"
-CLIENT_PORT="9321"
-CLIENT_USER="root"
-CLIENT_PASS="uUyb-ARfcT=D2mMpBn(L"
-
-SERVER_HOST="8.162.10.216"
-SERVER_PORT="22"
-SERVER_USER="root"
-SERVER_PASS="JeiFing1234@"
-
-PROTOCOL="hysteria2"
-SERVER_PORT_NUM="4433"
 
 # 日志函数
 log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
