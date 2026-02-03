@@ -1,0 +1,25 @@
+# FRP Python - 依赖项配置
+
+# 核心依赖（必需）
+aioquic>=1.0.0
+pyOpenSSL>=23.0.0
+certifi>=2023.0.0
+
+# 性能优化（可选，推荐安装）
+
+# uvloop - Linux/Mac事件循环加速
+# Windows不支持，会自动跳过
+# 性能提升：30-50%
+uvloop>=0.17.0; sys_platform != 'win32'
+
+# 其他可选优化工具
+
+# py-spy - Python性能分析工具
+# 用于分析CPU瓶颈
+# py-spy>=0.3.14
+
+# 或使用全套依赖安装命令：
+# pip install -r requirements_optimized.txt
+
+# 最小化安装（无性能优化）：
+# pip install aioquic pyOpenSSL certifi

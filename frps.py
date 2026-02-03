@@ -1,101 +1,238 @@
 #!/usr/bin/env python
-import sys, socket, time, threading
+import sys
+import socket
+import time
+import threading
 import struct
 import selectors
+import logging
+from collections import deque
+
 import lib.ConnTool as ConnTool
 
 sel = selectors.DefaultSelector()
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('frps')
+
+
+def optimize_socket(sock):
+    try:
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    except Exception:
+        pass
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    except Exception:
+        pass
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    except Exception:
+        pass
+    try:
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 30)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+    except Exception:
+        pass
+
+
+class ProxyManager:
+    def __init__(self):
+        self.active_frps = {}
+        self.lock = threading.Lock()
+
+    def register_frpc(self, proxy_name, frpc_conn):
+        with self.lock:
+            self.active_frps[proxy_name] = {
+                'frpc_conn': frpc_conn,
+                'user_queue': deque(),
+                'last_heartbeat': time.time()
+            }
+            logger.info(f'Registered frpc for proxy: {proxy_name}')
+
+    def unregister_frpc(self, proxy_name):
+        with self.lock:
+            if proxy_name in self.active_frps:
+                try:
+                    self.active_frps[proxy_name]['frpc_conn'].close()
+                except Exception:
+                    pass
+                del self.active_frps[proxy_name]
+                logger.info(f'Unregistered frpc for proxy: {proxy_name}')
+
+    def add_user_conn(self, proxy_name, user_conn):
+        with self.lock:
+            if proxy_name in self.active_frps:
+                self.active_frps[proxy_name]['user_queue'].append(user_conn)
+                return True
+            return False
+
+    def get_user_conn(self, proxy_name):
+        with self.lock:
+            if proxy_name in self.active_frps:
+                if self.active_frps[proxy_name]['user_queue']:
+                    return self.active_frps[proxy_name]['user_queue'].popleft()
+            return None
+
+    def update_heartbeat(self, proxy_name):
+        with self.lock:
+            if proxy_name in self.active_frps:
+                self.active_frps[proxy_name]['last_heartbeat'] = time.time()
+
+    def get_frpc_conn(self, proxy_name):
+        with self.lock:
+            if proxy_name in self.active_frps:
+                return self.active_frps[proxy_name]['frpc_conn']
+            return None
+
+    def is_alive(self, proxy_name):
+        with self.lock:
+            if proxy_name in self.active_frps:
+                return time.time() - self.active_frps[proxy_name]['last_heartbeat'] < 30
+            return False
+
+
+proxy_manager = ProxyManager()
+
+
 class Frps(threading.Thread):
-    def __init__(self, port, targetport):
+    def __init__(self, user_port, frps_port):
         threading.Thread.__init__(self)
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.bind(('0.0.0.0', port))
-        # 设置为非阻塞模式
-        self.sock.setblocking(False)
-        self.sock.listen(100)
-        sel.register(self.sock,selectors.EVENT_READ,self.accept_connection)
+        self.user_port = user_port
+        self.frps_port = frps_port
+        
+        self.user_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.user_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.user_sock.bind(('0.0.0.0', self.user_port))
+        self.user_sock.setblocking(False)
+        self.user_sock.listen(200)
+        sel.register(self.user_sock, selectors.EVENT_READ, self.accept_user_connection)
+        
+        self.frps_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.frps_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.frps_sock.bind(('0.0.0.0', self.frps_port))
+        self.frps_sock.setblocking(False)
+        self.frps_sock.listen(200)
+        sel.register(self.frps_sock, selectors.EVENT_READ, self.accept_frpc_connection)
+        
+        threading.Thread(target=self.check_timeouts, daemon=True).start()
 
-        frpc_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        frpc_sock.bind(('0.0.0.0', targetport))
-        frpc_sock.setblocking(False)
-        frpc_sock.listen(100)
-        sel.register(frpc_sock,selectors.EVENT_READ,self.accept_frp_connection)
-
-
-        self.frpc_cmd_conn =None
-        self.userConns = []
-
-
-    def heartbeat(self):
+    def check_timeouts(self):
         while True:
-            if self.frpc_cmd_conn is not None:
-                self.frpc_cmd_conn.send(struct.pack('i', 1))
-            time.sleep(9)
+            time.sleep(10)
+            current_time = time.time()
+            with proxy_manager.lock:
+                dead_proxies = [
+                    name for name, info in proxy_manager.active_frps.items()
+                    if current_time - info['last_heartbeat'] > 30
+                ]
+                for name in dead_proxies:
+                    logger.warning(f'Proxy {name} timed out, unregistering')
+                    proxy_manager.unregister_frpc(name)
 
-    # 收到用户tcp 先不接收 向frpc发送指令 让其建立工作tcp
-    def accept_connection(self,sock, mask):
-        userConn, addr = self.sock.accept()
-        userConn.setblocking(True)
-        self.userConns.append(userConn)
-        print('收到用户请求')
-        if self.frpc_cmd_conn is None:
-            # print(1)
-            return
-            # time.sleep(0.5)
-        print(2)
+    def accept_user_connection(self, sock, mask):
         try:
-            self.frpc_cmd_conn.send(struct.pack('i',2)) # 2建立新的tcp
-        except IOError as err:  # 非阻塞模式下调用 阻塞操作recv 如果没有数据会抛出异常
-            print(err)
-            pass
+            user_conn, addr = sock.accept()
+            optimize_socket(user_conn)
+            user_conn.setblocking(True)
+            
+            if proxy_manager.active_frps:
+                proxy_name = list(proxy_manager.active_frps.keys())[0]
+                if proxy_manager.add_user_conn(proxy_name, user_conn):
+                    logger.info(f'Received user connection from {addr}, queued for {proxy_name}')
+                    
+                    frpc_conn = proxy_manager.get_frpc_conn(proxy_name)
+                    if frpc_conn:
+                        try:
+                            frpc_conn.sendall(struct.pack('i', 2))
+                        except Exception as e:
+                            logger.error(f'Failed to send command to frpc: {e}')
+                else:
+                    logger.warning('No active frpc, closing user connection')
+                    user_conn.close()
+            else:
+                logger.warning('No active frpc, closing user connection')
+                user_conn.close()
+        except Exception as e:
+            logger.error(f'Error accepting user connection: {e}')
 
-
-    def accept_frp_connection(self,sock, mask):
-        frpc_conn, addr = sock.accept()
-        frpc_conn.setblocking(False)
-        # 注册为可读套接字
-        sel.register(frpc_conn, selectors.EVENT_READ, self.handle_controller_data)
-
-    def handle_controller_data(self,frpc_conn, mask):
-        # print('frpc',frpc_conn,mask,self.userConns)
+    def accept_frpc_connection(self, sock, mask):
         try:
-            data = frpc_conn.recv(4)  # Should be ready
-            if data:
-                cmd = struct.unpack('i',data)[0]
-                print("cmd:",cmd)
-                if cmd ==2:  # 是建立的工作tcp
-                    sel.unregister(frpc_conn) # 不再监听
-                    userConn = self.userConns.pop() # 从队列中选一个用户线程来处理
-                    frpc_conn.setblocking(True)
-                    # print(userConn)
-                    # print('cmd 2')
-                    # userConn, addr  = self.sock.accept()
-                    # self.frpc_conn.setblocking(True)
-                    # print(userConn)
-                    ConnTool.join(userConn,frpc_conn)
-                elif cmd ==1 and self.frpc_cmd_conn!=frpc_conn: # 说明是首次收到1
-                    self.frpc_cmd_conn = frpc_conn
-                    threading.Thread(target=self.heartbeat).start()
-        except IOError as err:  # 非阻塞模式下调用 阻塞操作recv 如果没有数据会抛出异常
-            pass
+            frpc_conn, addr = sock.accept()
+            optimize_socket(frpc_conn)
+            frpc_conn.setblocking(False)
+            sel.register(frpc_conn, selectors.EVENT_READ, self.handle_frpc_data)
+            logger.info(f'Accepted frpc connection from {addr}')
+        except Exception as e:
+            logger.error(f'Error accepting frpc connection: {e}')
+
+    def handle_frpc_data(self, frpc_conn, mask):
+        try:
+            data = frpc_conn.recv(4)
+            if not data:
+                logger.info('frpc connection closed')
+                sel.unregister(frpc_conn)
+                frpc_conn.close()
+                proxy_manager.unregister_frpc('default')
+                return
+            
+            cmd = struct.unpack('i', data)[0]
+            logger.debug(f'Received command: {cmd}')
+            
+            if cmd == 1:
+                proxy_manager.register_frpc('default', frpc_conn)
+                
+            elif cmd == 2:
+                sel.unregister(frpc_conn)
+                frpc_conn.setblocking(True)
+                
+                user_conn = proxy_manager.get_user_conn('default')
+                if user_conn:
+                    logger.info('Connecting user and frpc')
+                    ConnTool.join(user_conn, frpc_conn)
+                else:
+                    logger.warning('No user connection available')
+                    frpc_conn.close()
+                    
+        except Exception as e:
+            logger.error(f'Error handling frpc data: {e}')
+            try:
+                sel.unregister(frpc_conn)
+            except Exception:
+                pass
+            frpc_conn.close()
 
     def run(self):
+        logger.info(f'frps started - listening on 0.0.0.0:{self.user_port} (user) and 0.0.0.0:{self.frps_port} (frpc)')
         while True:
-            events = sel.select()
-            for key, mask in events:
-                callback = key.data
-                callback(key.fileobj, mask)
+            try:
+                events = sel.select(timeout=1.0)
+                for key, mask in events:
+                    callback = key.data
+                    try:
+                        callback(key.fileobj, mask)
+                    except Exception as e:
+                        logger.error(f'Error in callback: {e}')
+            except Exception as e:
+                logger.error(f'Error in select loop: {e}')
 
 
 if __name__ == '__main__':
-    try:
-        frpsport = int(sys.argv[1])
-        userport = int(sys.argv[2])
-    except (ValueError, IndexError):
-        print('Usage: %s frpsport userport' % sys.argv[0])
+    if len(sys.argv) != 3:
+        print('Usage: python frps.py <frps_port> <user_port>')
+        print('Example: python frps.py 7000 8001')
         sys.exit(1)
-
-    print('Starting...')
-    Frps(userport, frpsport).start()
-    print('frps server listen at 0.0.0.0:%d ,user port is %d' % (frpsport,userport))
-    # Frps(8080, 7000).start()
+    
+    try:
+        frps_port = int(sys.argv[1])
+        user_port = int(sys.argv[2])
+        Frps(user_port=user_port, frps_port=frps_port).start()
+    except ValueError:
+        print('Error: Ports must be integers')
+        sys.exit(1)
+    except KeyboardInterrupt:
+        logger.info('Shutting down...')
+        sys.exit(0)
