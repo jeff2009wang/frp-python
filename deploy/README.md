@@ -573,16 +573,3 @@ python auto_deploy.py --protocol hysteria2 --domain your-domain.com --email your
 
 ---
 
-## 联系支持
-
-如有问题，请查看故障排查部分或提交Issue。
-
----
-
-**部署完成后，请保存以下信息**:
-
-- 服务端地址: 8.162.10.216:4433
-- 认证密码: (查看部署输出或 `/etc/hysteria2/config.yaml`)
-- 客户端SOCKS5端口: 1080
-
-**祝您使用愉快！** 🎉
